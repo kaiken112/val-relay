@@ -19,11 +19,11 @@ const ROUNDS = parseInt(opt('--rounds', FAST ? 4 : 8), 10);
 const wait = ms => new Promise(r => setTimeout(r, FAST ? Math.max(5, ms / 20) : ms));
 
 const TEAM = [
-  { id: 'p1', name: 'CryoByte', agent: 'Neon' },
-  { id: 'p2', name: 'Mustard', agent: 'Omen' },
-  { id: 'p3', name: 'Annona', agent: 'Sova' },
-  { id: 'p4', name: 'Rook', agent: 'Killjoy' },
-  { id: 'p5', name: 'Vex', agent: 'Jett' },
+  { id: 'p1', name: 'Alpha', agent: 'Neon' },
+  { id: 'p2', name: 'Bravo', agent: 'Omen' },
+  { id: 'p3', name: 'Charlie', agent: 'Sova' },
+  { id: 'p4', name: 'Delta', agent: 'Killjoy' },
+  { id: 'p5', name: 'Echo', agent: 'Jett' },
 ];
 
 async function main() {
