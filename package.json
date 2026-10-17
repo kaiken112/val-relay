@@ -1,0 +1,16 @@
+{
+  "name": "val-relay",
+  "version": "0.2.0",
+  "description": "Relay server for val-overlay live stream links",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "mock": "node mock-agent.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

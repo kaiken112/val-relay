@@ -1,0 +1,9 @@
+# Render Blueprint: New + > Blueprint > pick the repo containing this file.
+services:
+  - type: web
+    name: val-relay
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz

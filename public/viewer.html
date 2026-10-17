@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Match</title>
+<style>
+  :root {
+    --bg: #0f1923; --panel: #1a2733; --line: #2b3b4a; --text: #ece8e1; --dim: #8b97a3;
+    --red: #ff4655; --teal: #3dd6c6; --amber: #f5b942;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  .wrap { max-width: 980px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { margin: 0; font-size: 18px; letter-spacing: .08em; text-transform: uppercase; }
+  .chips { display: flex; gap: 8px; align-items: center; }
+  .chip { padding: 3px 10px; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); color: var(--dim); }
+  .chip.live { color: var(--teal); border-color: var(--teal); }
+  .chip.off { color: var(--red); border-color: var(--red); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; text-align: center; gap: 12px; }
+  .score { font-size: 44px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .score.ally { color: var(--teal); } .score.enemy { color: var(--red); }
+  .meta { color: var(--dim); font-size: 13px; }
+  .mid .map { font-size: 18px; font-weight: 600; }
+  .result { display: none; margin-top: 6px; font-size: 20px; font-weight: 800; letter-spacing: .12em; }
+  .result.win { color: var(--teal); } .result.loss { color: var(--red); } .result.ended { color: var(--dim); font-size: 15px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .grid { grid-template-columns: 1fr; } .score { font-size: 34px; } }
+  h2 { margin: 0 0 10px; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); font-weight: 600; }
+  .players { display: grid; gap: 8px; }
+  .player { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+  .player.dead { opacity: .45; }
+  .pname { font-weight: 600; } .pagent { color: var(--dim); font-size: 13px; }
+  .credits { color: var(--amber); font-variant-numeric: tabular-nums; font-size: 13px; text-align: right; }
+  .hp { grid-column: 1 / -1; height: 5px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .hp > i { display: block; height: 100%; background: var(--teal); transition: width .3s; }
+  .radar { position: relative; aspect-ratio: 1; background: #0b131b; border: 1px solid var(--line); border-radius: 8px;
+           background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+           background-size: 25% 25%; }
+  .dot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--teal);
+         transition: left .25s linear, top .25s linear; display: grid; place-items: center; font-size: 8px; color: #04201d; font-weight: 700; }
+  .dot.dead { background: var(--dim); }
+  .log { max-height: 220px; overflow: auto; display: grid; gap: 4px; font-size: 13px; }
+  .log div { color: var(--dim); } .log b { color: var(--text); font-weight: 600; }
+  .empty { color: var(--dim); text-align: center; padding: 30px 10px; }
+  .note { color: var(--dim); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Live Match</h1>
+    <div class="chips">
+      <span class="chip" id="conn">connecting…</span>
+      <span class="chip" id="phase">offline</span>
+      <span class="chip" id="viewers">0 watching</span>
+    </div>
+  </header>
+
+  <section class="panel scoreboard">
+    <div><div class="score ally" id="sAlly">0</div><div class="meta">Streamer's team</div></div>
+    <div class="mid">
+      <div class="map" id="map">—</div>
+      <div class="meta" id="roundInfo">Waiting for match</div>
+      <div class="result" id="result"></div>
+    </div>
+    <div><div class="score enemy" id="sEnemy">0</div><div class="meta">Opponents</div></div>
+  </section>
+
+  <div class="grid">
+    <section class="panel"><h2>Team</h2><div class="players" id="players"><div class="empty">No players yet</div></div></section>
+    <section class="panel"><h2>Team positions</h2><div class="radar" id="radar"></div></section>
+  </div>
+
+  <section class="panel"><h2>Events</h2><div class="log" id="log"></div></section>
+  <div class="note">Only the streamer's own team is shown. Opponent data is never sent.</div>
+</div>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const room = location.pathname.split('/').pop();
+  const state = { snap: null, agentOnline: false };
+  let ws, retry = 0;
+
+  function setConn(text, cls) { const c = $('conn'); c.textContent = text; c.className = 'chip ' + (cls || ''); }
+
+  function connect() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/watch?room=${encodeURIComponent(room)}`);
+    ws.onopen = () => { retry = 0; setConn('connected', 'live'); };
+    ws.onclose = e => {
+      // 4001 = the relay says this stream is over. Repeated failures mean the code/link is dead.
+      if (e.code === 4001 || retry >= 8) {
+        setConn('stream ended', 'off');
+        $('phase').textContent = 'ended'; $('phase').className = 'chip off';
+        return;
+      }
+      setConn('reconnecting…', 'off');
+      setTimeout(connect, Math.min(10000, 500 * 2 ** retry++));
+    };
+    ws.onmessage = e => {
+      let m; try { m = JSON.parse(e.data); } catch { return; }
+      if (m.type === 'snapshot') {
+        state.snap = m.snapshot; state.agentOnline = m.agentOnline;
+        $('log').replaceChildren();
+        m.log.forEach(addLog);
+        $('viewers').textContent = `${m.viewers} watching`;
+        render();
+      } else if (m.type === 'event') {
+        apply(m.event); addLog(m.event); render();
+      } else if (m.type === 'agent') {
+        state.agentOnline = m.online;
+        if (!m.online && state.snap) state.snap.phase = 'offline';
+        render();
+      } else if (m.type === 'viewers') {
+        $('viewers').textContent = `${m.n} watching`;
+      }
+    };
+  }
+
+  function apply(ev) {
+    const s = state.snap || (state.snap = { agents: {}, players: {}, score: { ally: 0, enemy: 0 } });
+    const d = ev.data;
+    if (ev.type === 'phase_change') s.phase = d.phase;
+    else if (ev.type === 'agent_lock') s.agents[d.id] = { name: d.name, agent: d.agent };
+    else if (ev.type === 'match_start') { s.map = d.map; s.mode = d.mode; s.score = { ally: 0, enemy: 0 }; s.round = 0; s.players = {}; s.phase = 'ingame'; s.result = null; }
+    else if (ev.type === 'round_update') { if (d.round != null) s.round = d.round; if (d.score) s.score = d.score; if (d.side) s.side = d.side; if (d.phase) s.roundPhase = d.phase; }
+    else if (ev.type === 'player_update') d.players.forEach(p => s.players[p.id] = p);
+    else if (ev.type === 'match_end') { s.result = d; s.phase = 'ended'; }
+  }
+
+  function addLog(ev) {
+    const text = {
+      phase_change: d => `Phase: <b>${d.phase}</b>`,
+      agent_lock: d => `<b>${d.name || 'Player'}</b> locked <b>${d.agent}</b>`,
+      match_start: d => `Match started on <b>${d.map}</b>`,
+      round_update: d => `Round <b>${d.round ?? '?'}</b> ${d.phase || ''}${d.winner ? ' — won by <b>' + d.winner + '</b>' : ''}`,
+      match_end: d => `Match ended <b>${d.score ? d.score.ally + '–' + d.score.enemy : ''}</b>`,
+    }[ev.type];
+    if (!text) return;
+    const row = document.createElement('div');
+    // build safely: values pass through textContent via a tmp node
+    const tmp = document.createElement('template');
+    const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const safe = {}; for (const [k, v] of Object.entries(ev.data)) safe[k] = (v && typeof v === 'object') ? v : esc(v);
+    tmp.innerHTML = text(safe);
+    row.append(tmp.content);
+    const log = $('log'); log.prepend(row);
+    while (log.children.length > 50) log.lastChild.remove();
+  }
+
+  function render() {
+    const s = state.snap; if (!s) return;
+    $('phase').textContent = s.phase || 'offline';
+    $('phase').className = 'chip ' + (state.agentOnline && s.phase !== 'offline' ? 'live' : 'off');
+    $('sAlly').textContent = s.score?.ally ?? 0;
+    $('sEnemy').textContent = s.score?.enemy ?? 0;
+    $('map').textContent = s.map || '—';
+    const bits = [];
+    if (s.round != null) bits.push('Round ' + s.round);
+    if (s.side) bits.push(s.side === 'attack' ? 'Attacking' : 'Defending');
+    if (s.roundPhase) bits.push(s.roundPhase);
+    $('roundInfo').textContent = bits.join(' · ') || 'Waiting for match';
+    const res = $('result');
+    if (s.result) {
+      const r = s.result;
+      res.style.display = 'block';
+      res.className = 'result ' + (r.decided === false ? 'ended' : (r.won ? 'win' : 'loss'));
+      res.textContent = r.decided === false ? 'MATCH ENDED' : (r.won ? 'VICTORY' : 'DEFEAT');
+    } else { res.style.display = 'none'; }
+
+    const list = $('players'); list.replaceChildren();
+    const ps = Object.values(s.players || {});
+    if (!ps.length) {
+      const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'No players yet'; list.append(e);
+    }
+    for (const p of ps) {
+      const el = document.createElement('div'); el.className = 'player' + (p.alive === false ? ' dead' : '');
+      const left = document.createElement('div');
+      const n = document.createElement('div'); n.className = 'pname'; n.textContent = p.name || 'Player';
+      const a = document.createElement('div'); a.className = 'pagent'; a.textContent = p.agent || '';
+      left.append(n, a);
+      const c = document.createElement('div'); c.className = 'credits'; c.textContent = p.credits != null ? p.credits + ' cr' : '';
+      el.append(left, c);
+      if (typeof p.hp === 'number') {
+        const hp = document.createElement('div'); hp.className = 'hp';
+        const i = document.createElement('i'); i.style.width = Math.max(0, Math.min(100, p.hp)) + '%'; hp.append(i);
+        el.append(hp);
+      }
+      list.append(el);
+    }
+
+    const radar = $('radar');
+    const seen = new Set();
+    ps.forEach((p, idx) => {
+      if (typeof p.x !== 'number' || typeof p.y !== 'number') return;
+      seen.add(p.id);
+      let d = radar.querySelector(`[data-id="${p.id}"]`);
+      if (!d) { d = document.createElement('div'); d.dataset.id = p.id; radar.append(d); }
+      d.className = 'dot' + (p.alive === false ? ' dead' : '');
+      d.textContent = (p.name || '?').slice(0, 1).toUpperCase();
+      d.style.left = (p.x * 100) + '%'; d.style.top = (p.y * 100) + '%';
+    });
+    radar.querySelectorAll('.dot').forEach(d => { if (!seen.has(d.dataset.id)) d.remove(); });
+    let msg = $('radarMsg');
+    if (!msg) { msg = document.createElement('div'); msg.id = 'radarMsg'; msg.className = 'empty'; msg.style.cssText = 'position:absolute;inset:0;display:grid;place-items:center'; msg.textContent = 'Teammate positions are not shown'; radar.append(msg); }
+    msg.style.display = seen.size ? 'none' : 'grid';
+  }
+
+  connect();
+})();
+</script>
+</body>
+</html>
